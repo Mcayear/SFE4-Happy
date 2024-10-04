@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN">
+    <Appenders>
+        <!-- 控制台输出 -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout charset="UTF-8" pattern="[%t] %-5level - %msg%n"/>
+        </Console>
+    </Appenders>
+
+    <Loggers>
+        <!-- 设置根日志记录器，输出所有级别的日志 -->
+        <Root level="info">
+            <AppenderRef ref="Console"/>
+        </Root>
+
+        <!-- 为特定包或类设置日志级别 -->
+        <Logger name="cn.mcayear.sfe4happy" level="debug" additivity="false">
+            <AppenderRef ref="Console"/>
+        </Logger>
+    </Loggers>
+</Configuration>

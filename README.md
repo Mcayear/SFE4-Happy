@@ -48,9 +48,20 @@ Within the `package` directory, create an `info.json` file that defines the subp
 
 ```json
 {
-  "frp": ["path/to/frp", "-c", "frpc.ini"],
-  "server1": ["java", "-jar", "server1.jar"],
-  "server2": ["start.sh"]
+  "frp": [
+    "frpc_linux_amd64",
+    "-n", 
+    "-u", "0dd7b43bdf696969b682ce4cc9a86f61",
+    "-p", "504494,504495"
+  ],
+  "server1": [
+    "java", 
+    "-jar", 
+    "server1.jar"
+  ],
+  "server2": [
+    "start.sh"
+  ]
 }
 ```
 

@@ -61,7 +61,7 @@ public class ApplicationManager {
         try {
             if (server1Process != null && server1Process.isAlive()) {
                 sendStopCommandToProcess(server1Process);
-                if (server1Process.waitFor(10, TimeUnit.SECONDS)) {  // 等待10秒
+                if (server1Process.waitFor(30, TimeUnit.SECONDS)) {  // 等待30秒
                     logger.info("SERVER1 进程已终止");
                 } else {
                     logger.warn("SERVER1 进程终止超时");
@@ -71,7 +71,7 @@ public class ApplicationManager {
 
             if (server2Process != null && server2Process.isAlive()) {
                 sendStopCommandToProcess(server2Process);
-                if (server2Process.waitFor(10, TimeUnit.SECONDS)) {  // 设置10秒超时时间
+                if (server2Process.waitFor(30, TimeUnit.SECONDS)) {  // 设置30秒超时时间
                     logger.info("SERVER2 进程已终止");
                 } else {
                     logger.warn("SERVER2 进程终止超时，正在强制关闭...");
@@ -86,7 +86,7 @@ public class ApplicationManager {
 
             if (frpProcess != null && frpProcess.isAlive()) {
                 frpProcess.destroy(); // 向子进程发送终止信号
-                if (frpProcess.waitFor(10, TimeUnit.SECONDS)) {  // 设置10秒超时时间
+                if (frpProcess.waitFor(15, TimeUnit.SECONDS)) {  // 设置15秒超时时间
                     logger.info("FRP 进程已终止");
                 } else {
                     logger.warn("FRP 进程终止超时，正在强制关闭...");
@@ -171,7 +171,7 @@ public class ApplicationManager {
     private void sendCommandToProcess(Process process, String command) {
         if (process != null && process.isAlive()) {
             try {
-                process.getOutputStream().write((command + "\n").getBytes());
+                process.getOutputStream().write((command + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 process.getOutputStream().flush();
             } catch (IOException e) {
                 logger.error("向进程发送命令时出错", e);
@@ -195,7 +195,7 @@ public class ApplicationManager {
     private void sendStopCommandToProcess(Process process) {
         if (process != null) {
             try {
-                process.getOutputStream().write("stop\n".getBytes());
+                process.getOutputStream().write("stop\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 process.getOutputStream().flush(); // 刷新流，确保命令发送出去
             } catch (IOException e) {
                 logger.error("向进程发送 stop 命令时出错", e);

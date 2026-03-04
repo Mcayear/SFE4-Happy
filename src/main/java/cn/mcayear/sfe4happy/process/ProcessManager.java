@@ -116,7 +116,7 @@ public class ProcessManager {
             logger.warn("无法解析脚本解释器路径");
         }
         if (hasCrlf) {
-            List<String> stripCommand = buildCrlfStrippedCommand(resolvedPath, interpreterPath);
+            List<String> stripCommand = buildCrlfStrippedCommand(resolvedPath, interpreterPath, processCommand);
             if (stripCommand != null) {
                 logger.warn("使用去CR方式执行脚本: {}", stripCommand);
                 return stripCommand;
@@ -136,9 +136,21 @@ public class ProcessManager {
         if (resolvedPath == null || !Files.isRegularFile(resolvedPath)) {
             return null;
         }
+        
+        String fileName = resolvedPath.getFileName() != null ? resolvedPath.getFileName().toString().toLowerCase() : "";
+        boolean isWindows = System.getProperty("os.name").toLowerCase().contains("win");
+        
+        if (isWindows && (fileName.endsWith(".bat") || fileName.endsWith(".cmd"))) {
+            List<String> cmdCommand = new ArrayList<>();
+            cmdCommand.add("cmd.exe");
+            cmdCommand.add("/c");
+            cmdCommand.addAll(processCommand);
+            return cmdCommand;
+        }
+
         if (hasCrlf) {
             Path interpreterPath = firstLine != null && firstLine.startsWith("#!") ? resolveInterpreterPath(parseInterpreter(firstLine)) : null;
-            List<String> stripCommand = buildCrlfStrippedCommand(resolvedPath, interpreterPath);
+            List<String> stripCommand = buildCrlfStrippedCommand(resolvedPath, interpreterPath, processCommand);
             if (stripCommand != null) {
                 return stripCommand;
             }
@@ -146,7 +158,6 @@ public class ProcessManager {
         if (firstLine != null && firstLine.startsWith("#!")) {
             return buildInterpreterCommand(resolvedPath, processCommand);
         }
-        String fileName = resolvedPath.getFileName() != null ? resolvedPath.getFileName().toString().toLowerCase() : "";
         if (fileName.endsWith(".sh")) {
             return buildInterpreterCommand(resolvedPath, processCommand);
         }
@@ -250,38 +261,42 @@ public class ProcessManager {
         return false;
     }
 
-    private static List<String> buildCrlfStrippedCommand(Path scriptPath, Path interpreterPath) {
-        String shell = null;
-        if (interpreterPath != null && Files.exists(interpreterPath)) {
-            shell = interpreterPath.toString();
-        }
-        if (shell == null) {
-            shell = findExecutableInPath("bash");
-        }
-        if (shell == null) {
-            shell = findExecutableInPath("sh");
-        }
-        if (shell == null) {
+    private static List<String> buildCrlfStrippedCommand(Path scriptPath, Path interpreterPath, List<String> currentCommand) {
+        String bash = findExecutableInPath("bash");
+        if (bash == null) {
             Path bashPath = Paths.get("/bin/bash");
             if (Files.exists(bashPath)) {
-                shell = bashPath.toString();
+                bash = bashPath.toString();
             }
         }
-        if (shell == null) {
-            Path shPath = Paths.get("/bin/sh");
-            if (Files.exists(shPath)) {
-                shell = shPath.toString();
-            }
-        }
-        if (shell == null) {
+        if (bash == null) {
             return null;
         }
+
+        String interpreter = bash;
+        if (interpreterPath != null && Files.exists(interpreterPath)) {
+            interpreter = interpreterPath.toString();
+        } else {
+            String sh = findExecutableInPath("sh");
+            if (sh != null) {
+                interpreter = sh;
+            } else {
+                Path shPath = Paths.get("/bin/sh");
+                if (Files.exists(shPath)) {
+                    interpreter = shPath.toString();
+                }
+            }
+        }
+
         List<String> command = new ArrayList<>();
-        command.add(shell);
+        command.add(bash);
         command.add("-c");
-        command.add("tr -d '\\r' < \"$1\" | \"" + shell + "\"");
-        command.add("bash");
+        command.add("exec \"$0\" <(tr -d '\\r' < \"$1\") \"${@:2}\"");
+        command.add(interpreter);
         command.add(scriptPath.toString());
+        if (currentCommand != null && currentCommand.size() > 1) {
+            command.addAll(currentCommand.subList(1, currentCommand.size()));
+        }
         return command;
     }
 

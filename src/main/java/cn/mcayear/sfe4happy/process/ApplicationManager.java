@@ -4,8 +4,10 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Scanner;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
@@ -16,9 +18,7 @@ import static cn.mcayear.sfe4happy.process.ProcessManager.startProcess;
 
 public class ApplicationManager {
 
-    private static Process frpProcess;
-    private static Process server1Process;
-    private static Process server2Process;
+    private static final Map<String, Process> processPool = new ConcurrentHashMap<>();
 
     public void runApplication(String[] args) {
         logger.info("欢迎使用 SFE4 嗨皮!");
@@ -27,17 +27,19 @@ public class ApplicationManager {
         // 传递拼接后的路径给 ParsePackage
         ParsePackage taskConfig1 = new ParsePackage(infoPath.toFile());
 
-        // 启动 frp
-        frpProcess = startProcessAsync(taskConfig1.config.getFrp(), "FRP", basePath.resolve("frp").toFile());
-
-        // 启动 server
-        server1Process = !taskConfig1.config.getServer1().isEmpty()
-                ? startProcessAsync(taskConfig1.config.getServer1(), "SERVER1", basePath.resolve("server1").toFile())
-                : null;
-
-        server2Process = !taskConfig1.config.getServer2().isEmpty()
-                ? startProcessAsync(taskConfig1.config.getServer2(), "SERVER2", basePath.resolve("server2").toFile())
-                : null;
+        // 遍历配置中的所有进程并启动
+        if (taskConfig1.config != null) {
+            for (Map.Entry<String, List<String>> entry : taskConfig1.config.entrySet()) {
+                String processName = entry.getKey().toLowerCase();
+                List<String> command = entry.getValue();
+                if (command != null && !command.isEmpty()) {
+                    Process p = startProcessAsync(command, processName.toUpperCase(), basePath.resolve(processName).toFile());
+                    if (p != null) {
+                        processPool.put(processName, p);
+                    }
+                }
+            }
+        }
 
         // 捕获 ^C 信号和 JVM 关闭事件
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -60,50 +62,29 @@ public class ApplicationManager {
     private void shutdownProcesses() {
         logger.info("准备关闭所有子进程...");
         try {
-            if (server1Process != null && server1Process.isAlive()) {
-                sendStopCommandToProcess(server1Process);
-                if (server1Process.waitFor(30, TimeUnit.SECONDS)) {  // 等待30秒
-                    logger.info("SERVER1 进程已终止");
-                } else {
-                    logger.warn("SERVER1 进程终止超时");
-                    server1Process.destroy();  // 超时后强制终止
-                }
-            }
-
-            if (server2Process != null && server2Process.isAlive()) {
-                sendStopCommandToProcess(server2Process);
-                if (server2Process.waitFor(30, TimeUnit.SECONDS)) {  // 设置30秒超时时间
-                    logger.info("SERVER2 进程已终止");
-                } else {
-                    logger.warn("SERVER2 进程终止超时，正在强制关闭...");
-                    server2Process.destroy();  // 超时后强制终止
-                    if (server2Process.waitFor(5, TimeUnit.SECONDS)) {  // 再等待5秒确保完全终止
-                        logger.info("SERVER2 进程已强制终止");
+            for (Map.Entry<String, Process> entry : processPool.entrySet()) {
+                String name = entry.getKey().toUpperCase();
+                Process p = entry.getValue();
+                if (p != null && p.isAlive()) {
+                    sendStopCommandToProcess(p);
+                    if (p.waitFor(30, TimeUnit.SECONDS)) {  // 等待30秒
+                        logger.info(name + " 进程已终止");
                     } else {
-                        logger.error("SERVER2 进程无法强制终止");
+                        logger.warn(name + " 进程终止超时，正在强制关闭...");
+                        p.destroy();  // 超时后强制终止
+                        if (p.waitFor(5, TimeUnit.SECONDS)) {  // 再等待5秒确保完全终止
+                            logger.info(name + " 进程已强制终止");
+                        } else {
+                            logger.error(name + " 进程无法强制终止");
+                        }
                     }
                 }
             }
-
-            if (frpProcess != null && frpProcess.isAlive()) {
-                frpProcess.destroy(); // 向子进程发送终止信号
-                if (frpProcess.waitFor(15, TimeUnit.SECONDS)) {  // 设置15秒超时时间
-                    logger.info("FRP 进程已终止");
-                } else {
-                    logger.warn("FRP 进程终止超时，正在强制关闭...");
-                    frpProcess.destroy();  // 超时后强制终止
-                    if (frpProcess.waitFor(5, TimeUnit.SECONDS)) {  // 再等待5秒确保完全终止
-                        logger.info("FRP 进程已强制终止");
-                    } else {
-                        logger.error("FRP 进程无法强制终止");
-                    }
-                }
-            }
-
         } catch (InterruptedException e) {
             logger.error("等待进程关闭时发生中断", e);
             Thread.currentThread().interrupt(); // 恢复中断状态
         }
+        processPool.clear();
         logger.info("所有子进程已终止");
     }
 
@@ -117,76 +98,59 @@ public class ApplicationManager {
         Path infoPath = basePath.resolve("info.json");
         ParsePackage taskConfig1 = new ParsePackage(infoPath.toFile());
 
-        frpProcess = startProcessAsync(taskConfig1.config.getFrp(), "FRP", basePath.resolve("frp").toFile());
-
-        server1Process = !taskConfig1.config.getServer1().isEmpty()
-                ? startProcessAsync(taskConfig1.config.getServer1(), "SERVER1", basePath.resolve("server1").toFile())
-                : null;
-
-        server2Process = !taskConfig1.config.getServer2().isEmpty()
-                ? startProcessAsync(taskConfig1.config.getServer2(), "SERVER2", basePath.resolve("server2").toFile())
-                : null;
+        if (taskConfig1.config != null) {
+            for (Map.Entry<String, List<String>> entry : taskConfig1.config.entrySet()) {
+                String processName = entry.getKey().toLowerCase();
+                List<String> command = entry.getValue();
+                if (command != null && !command.isEmpty()) {
+                    Process p = startProcessAsync(command, processName.toUpperCase(), basePath.resolve(processName).toFile());
+                    if (p != null) {
+                        processPool.put(processName, p);
+                    }
+                }
+            }
+        }
         
         logger.info("所有进程已重启完成");
     }
 
     private void restartProcess(String processName) {
+        processName = processName.toLowerCase();
         logger.info("收到 restart " + processName + " 命令，正在重启该进程...");
         Path infoPath = basePath.resolve("info.json");
         ParsePackage taskConfig1 = new ParsePackage(infoPath.toFile());
 
+        if (taskConfig1.config == null) {
+            logger.warn("配置解析失败或为空");
+            return;
+        }
+
+        List<String> command = taskConfig1.config.get(processName);
+        if (command == null || command.isEmpty()) {
+            logger.warn("配置文件中未找到 " + processName + " 的配置或配置为空");
+            return;
+        }
+
         try {
-            switch (processName) {
-                case "server1":
-                    if (server1Process != null && server1Process.isAlive()) {
-                        sendStopCommandToProcess(server1Process);
-                        if (server1Process.waitFor(30, TimeUnit.SECONDS)) {
-                            logger.info("SERVER1 进程已终止");
-                        } else {
-                            logger.warn("SERVER1 进程终止超时，正在强制关闭...");
-                            server1Process.destroy();
-                            server1Process.waitFor(5, TimeUnit.SECONDS);
-                        }
-                    }
-                    server1Process = !taskConfig1.config.getServer1().isEmpty()
-                            ? startProcessAsync(taskConfig1.config.getServer1(), "SERVER1", basePath.resolve("server1").toFile())
-                            : null;
-                    logger.info("SERVER1 进程已重启完成");
-                    break;
-                case "server2":
-                    if (server2Process != null && server2Process.isAlive()) {
-                        sendStopCommandToProcess(server2Process);
-                        if (server2Process.waitFor(30, TimeUnit.SECONDS)) {
-                            logger.info("SERVER2 进程已终止");
-                        } else {
-                            logger.warn("SERVER2 进程终止超时，正在强制关闭...");
-                            server2Process.destroy();
-                            server2Process.waitFor(5, TimeUnit.SECONDS);
-                        }
-                    }
-                    server2Process = !taskConfig1.config.getServer2().isEmpty()
-                            ? startProcessAsync(taskConfig1.config.getServer2(), "SERVER2", basePath.resolve("server2").toFile())
-                            : null;
-                    logger.info("SERVER2 进程已重启完成");
-                    break;
-                case "frp":
-                    if (frpProcess != null && frpProcess.isAlive()) {
-                        frpProcess.destroy();
-                        if (frpProcess.waitFor(15, TimeUnit.SECONDS)) {
-                            logger.info("FRP 进程已终止");
-                        } else {
-                            logger.warn("FRP 进程终止超时，正在强制关闭...");
-                            frpProcess.destroy();
-                            frpProcess.waitFor(5, TimeUnit.SECONDS);
-                        }
-                    }
-                    frpProcess = startProcessAsync(taskConfig1.config.getFrp(), "FRP", basePath.resolve("frp").toFile());
-                    logger.info("FRP 进程已重启完成");
-                    break;
-                default:
-                    logger.warn("未知的进程名称：" + processName);
-                    break;
+            Process p = processPool.get(processName);
+            if (p != null && p.isAlive()) {
+                sendStopCommandToProcess(p);
+                if (p.waitFor(30, TimeUnit.SECONDS)) {
+                    logger.info(processName.toUpperCase() + " 进程已终止");
+                } else {
+                    logger.warn(processName.toUpperCase() + " 进程终止超时，正在强制关闭...");
+                    p.destroy();
+                    p.waitFor(5, TimeUnit.SECONDS);
+                }
             }
+            
+            Process newProcess = startProcessAsync(command, processName.toUpperCase(), basePath.resolve(processName).toFile());
+            if (newProcess != null) {
+                processPool.put(processName, newProcess);
+            } else {
+                processPool.remove(processName);
+            }
+            logger.info(processName.toUpperCase() + " 进程已重启完成");
         } catch (InterruptedException e) {
             logger.error("等待进程关闭时发生中断", e);
             Thread.currentThread().interrupt();
@@ -195,7 +159,7 @@ public class ApplicationManager {
 
     private void listenForStopCommand() {
         try (Scanner scanner = new Scanner(System.in)) {
-            Process currentScreenProcess = null;  // 当前连接的进程
+            String currentScreenProcessName = null;  // 当前连接的进程名
             while (true) {
                 if (scanner.hasNextLine()) {
                     String input = scanner.nextLine().trim();
@@ -206,24 +170,16 @@ public class ApplicationManager {
                         break;  // 退出循环，停止应用
                     } else if (input.equalsIgnoreCase("restart")) {
                         restartProcesses();
-                        currentScreenProcess = null;
+                        currentScreenProcessName = null;
                         logger.info("已退出 screen 模式（所有进程已重启）");
                     } else if (input.toLowerCase().startsWith("restart ")) {
                         String[] parts = input.split("\\s+", 2);
                         if (parts.length >= 2) {
                             String processName = parts[1].trim().toLowerCase();
                             restartProcess(processName);
-                            if (currentScreenProcess != null) {
-                                if (processName.equals("server1") && currentScreenProcess == server1Process) {
-                                    currentScreenProcess = null;
-                                    logger.info("已退出 screen 模式（当前连接的进程已重启）");
-                                } else if (processName.equals("server2") && currentScreenProcess == server2Process) {
-                                    currentScreenProcess = null;
-                                    logger.info("已退出 screen 模式（当前连接的进程已重启）");
-                                } else if (processName.equals("frp") && currentScreenProcess == frpProcess) {
-                                    currentScreenProcess = null;
-                                    logger.info("已退出 screen 模式（当前连接的进程已重启）");
-                                }
+                            if (currentScreenProcessName != null && currentScreenProcessName.equals(processName)) {
+                                currentScreenProcessName = null;
+                                logger.info("已退出 screen 模式（当前连接的进程已重启）");
                             }
                         } else {
                             logger.warn("请指定要重启的进程，例如：restart server1");
@@ -232,44 +188,23 @@ public class ApplicationManager {
                         String[] parts = input.split("\\s+", 2);
                         if (parts.length >= 2) {
                             String processName = parts[1].trim().toLowerCase();
-                            switch (processName) {
-                                case "server1":
-                                    if (server1Process != null && server1Process.isAlive()) {
-                                        currentScreenProcess = server1Process;
-                                        logger.info("已连接到 SERVER1 进程");
-                                    } else {
-                                        logger.warn("SERVER1 进程未启动或已结束");
-                                    }
-                                    break;
-                                case "server2":
-                                    if (server2Process != null && server2Process.isAlive()) {
-                                        currentScreenProcess = server2Process;
-                                        logger.info("已连接到 SERVER2 进程");
-                                    } else {
-                                        logger.warn("SERVER2 进程未启动或已结束");
-                                    }
-                                    break;
-                                case "frp":
-                                    if (frpProcess != null && frpProcess.isAlive()) {
-                                        currentScreenProcess = frpProcess;
-                                        logger.info("已连接到 FRP 进程");
-                                    } else {
-                                        logger.warn("FRP 进程未启动或已结束");
-                                    }
-                                    break;
-                                default:
-                                    logger.warn("未知的进程名称：" + processName);
-                                    break;
+                            Process p = processPool.get(processName);
+                            if (p != null && p.isAlive()) {
+                                currentScreenProcessName = processName;
+                                logger.info("已连接到 " + processName.toUpperCase() + " 进程");
+                            } else {
+                                logger.warn(processName.toUpperCase() + " 进程未启动或已结束");
                             }
                         } else {
                             logger.warn("请指定要连接的进程，例如：screen server1");
                         }
-                    } else if (currentScreenProcess != null) {
+                    } else if (currentScreenProcessName != null) {
                         if (input.equalsIgnoreCase("exit")) {
-                            currentScreenProcess = null;
+                            currentScreenProcessName = null;
                             logger.info("已退出 screen 模式");
                         } else if (!input.equalsIgnoreCase("stop") && !input.toLowerCase().startsWith("screen ")) {
-                            sendCommandToProcess(currentScreenProcess, input);
+                            Process p = processPool.get(currentScreenProcessName);
+                            sendCommandToProcess(p, input);
                         }
                     } else {
                         logger.warn("未知的命令：" + input);
@@ -287,7 +222,7 @@ public class ApplicationManager {
         logger.info("stop                - 关闭所有子进程并安全退出本程序");
         logger.info("restart [进程名]     - 重新加载配置文件并重启所有或指定子进程 (例如: restart server1)");
         logger.info("screen <进程名>      - 进入指定进程的控制台进行交互 (例如: screen server1)");
-        logger.info("                      可用进程名: frp, server1, server2");
+        logger.info("                      (配置文件中的任何键都可以作为进程名)");
         logger.info("exit                - (仅在 screen 模式下有效) 退出当前进程交互");
         logger.info("========================================================");
     }

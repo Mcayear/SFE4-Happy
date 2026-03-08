@@ -62,27 +62,51 @@ public class ApplicationManager {
     private void shutdownProcesses() {
         logger.info("准备关闭所有子进程...");
         try {
+            // 首先给所有非 FRP 的进程发送 stop 命令，让它们开始安全关闭
             for (Map.Entry<String, Process> entry : processPool.entrySet()) {
                 String name = entry.getKey().toUpperCase();
                 Process p = entry.getValue();
                 if (p != null && p.isAlive()) {
-                    sendStopCommandToProcess(p);
-                    if (p.waitFor(30, TimeUnit.SECONDS)) {  // 等待30秒
-                        logger.info(name + " 进程已终止");
-                    } else {
-                        logger.warn(name + " 进程终止超时，正在强制关闭...");
-                        p.destroy();  // 超时后强制终止
-                        if (p.waitFor(5, TimeUnit.SECONDS)) {  // 再等待5秒确保完全终止
-                            logger.info(name + " 进程已强制终止");
-                        } else {
-                            logger.error(name + " 进程无法强制终止");
-                        }
+                    if (!name.equalsIgnoreCase("FRP")) {
+                        sendStopCommandToProcess(p);
                     }
                 }
             }
-        } catch (InterruptedException e) {
-            logger.error("等待进程关闭时发生中断", e);
-            Thread.currentThread().interrupt(); // 恢复中断状态
+            
+            // 然后再等待每个进程结束或进行强制销毁
+            for (Map.Entry<String, Process> entry : processPool.entrySet()) {
+                String name = entry.getKey().toUpperCase();
+                Process p = entry.getValue();
+                if (p != null && p.isAlive()) {
+                    // frp 通常不支持 stop 命令，我们需要直接销毁
+                    if (name.equalsIgnoreCase("FRP")) {
+                        p.destroy();
+                    }
+                    
+                    try {
+                        // 我们稍微等待一下，但如果它已经被上一步的 stop 关掉了，这会立刻返回
+                        if (p.waitFor(15, TimeUnit.SECONDS)) {  // 等待15秒
+                            logger.info(name + " 进程已终止");
+                        } else {
+                            // 当超时时，执行销毁
+                            logger.warn(name + " 进程终止超时，正在强制关闭...");
+                            p.destroy();  // 超时后强制终止
+                            
+                            if (!p.waitFor(5, TimeUnit.SECONDS)) {  // 再等待5秒确保完全终止
+                                logger.error(name + " 进程无法强制终止，正在调用 destroyForcibly...");
+                                p.destroyForcibly();
+                            } else {
+                                logger.info(name + " 进程已强制终止");
+                            }
+                        }
+                    } catch (InterruptedException e) {
+                        logger.warn("等待 " + name + " 进程关闭时被中断");
+                        Thread.currentThread().interrupt(); // 重新标记中断状态
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("关闭进程时发生错误", e);
         }
         processPool.clear();
         logger.info("所有子进程已终止");
@@ -134,13 +158,32 @@ public class ApplicationManager {
         try {
             Process p = processPool.get(processName);
             if (p != null && p.isAlive()) {
-                sendStopCommandToProcess(p);
-                if (p.waitFor(30, TimeUnit.SECONDS)) {
-                    logger.info(processName.toUpperCase() + " 进程已终止");
-                } else {
-                    logger.warn(processName.toUpperCase() + " 进程终止超时，正在强制关闭...");
+                if (processName.equalsIgnoreCase("frp")) {
                     p.destroy();
-                    p.waitFor(5, TimeUnit.SECONDS);
+                } else {
+                    sendStopCommandToProcess(p);
+                }
+                
+                try {
+                    if (p.waitFor(15, TimeUnit.SECONDS)) {
+                        logger.info(processName.toUpperCase() + " 进程已终止");
+                    } else {
+                        logger.warn(processName.toUpperCase() + " 进程终止超时，正在强制关闭...");
+                        p.destroy();
+                        
+                        boolean exited = false;
+                        try {
+                            exited = p.waitFor(5, TimeUnit.SECONDS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        
+                        if (!exited) {
+                            p.destroyForcibly();
+                        }
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
                 }
             }
             
@@ -151,9 +194,11 @@ public class ApplicationManager {
                 processPool.remove(processName);
             }
             logger.info(processName.toUpperCase() + " 进程已重启完成");
-        } catch (InterruptedException e) {
+        } catch (Exception e) {
             logger.error("等待进程关闭时发生中断", e);
-            Thread.currentThread().interrupt();
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -254,10 +299,12 @@ public class ApplicationManager {
     private void sendStopCommandToProcess(Process process) {
         if (process != null) {
             try {
+                // frp 通常不支持 stop 命令，且部分进程关闭输入流时会报错，所以忽略报错
                 process.getOutputStream().write("stop\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 process.getOutputStream().flush(); // 刷新流，确保命令发送出去
-            } catch (IOException e) {
-                logger.error("向进程发送 stop 命令时出错", e);
+            } catch (Exception e) {
+                // logger.error("向进程发送 stop 命令时出错", e); 
+                // Ignore errors like Stream closed when writing stop
             }
         }
     }
